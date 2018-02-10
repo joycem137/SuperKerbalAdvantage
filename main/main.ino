@@ -1,19 +1,20 @@
+#include <krpc.h>
+#include <krpc/services/krpc.h>
+#include <krpc/services/space_center.h>
+#include <InputDebounce.h>
+#include <ResponsiveAnalogRead.h>
+
+// System config
+#define ANALOG_MAX 1023
+#define BUTTON_DEBOUNCE_TIME 100
+#define LOOP_DELAY 3
+
+// Wiring
 #define ROTATION_X A0
 #define ROTATION_Y A1
 #define ROTATION_Z A2
 #define THROTTLE A6
 #define STAGE_LOCK 23
-
-#define THROTTLE_MIN 30
-#define THROTTLE_MAX 1000
-
-#define BUTTON_DEBOUNCE_TIME 100
-
-#define LOOP_DELAY 3
-
-#include <krpc.h>
-#include <krpc/services/krpc.h>
-#include <krpc/services/space_center.h>
 
 // krpc values
 HardwareSerial * conn;
@@ -25,30 +26,40 @@ void retrieveActiveVessel() {
   krpc_SpaceCenter_Vessel_Control(conn, &vesselControl, vessel);  
 }
 
-// Throttle control
-int lastThrottleSetting = 0;
+int readAnalogWithDeadZone(ResponsiveAnalogRead analog, int deadzone, bool invert) {  
+  int value = analog.getValue();
+  int trueMax = ANALOG_MAX - deadzone;
+  int scaledValue;
 
-void readThrottle() {
-  int rawValue = analogRead(THROTTLE);
-  int newSetting;
-  if (rawValue < THROTTLE_MIN) {
-    newSetting = 0;
-  } else if (rawValue > THROTTLE_MAX) {
-    newSetting = 1000;
+  if (value < deadzone) {
+    scaledValue = 0;
+  } else if (value > trueMax) {
+    scaledValue = ANALOG_MAX;
   } else {
-    newSetting = map(rawValue, THROTTLE_MIN, THROTTLE_MAX, 0, 1000);
+    // Scale to between our two values
+    scaledValue = map(value, deadzone, trueMax, 0, ANALOG_MAX);
   }
-  // Invert the values
-  newSetting = 1000 - newSetting;
-
-  if (abs(newSetting - lastThrottleSetting) > 5) {
-    lastThrottleSetting = newSetting;
-    float newThrottle = (float)newSetting / 1000.0;
-    krpc_SpaceCenter_Control_set_Throttle(conn, vesselControl, newThrottle);
+  
+  if (invert) {
+    scaledValue = ANALOG_MAX - scaledValue;
   }
+  
+  return scaledValue;
 }
 
-#include <InputDebounce.h>
+ResponsiveAnalogRead throttle(A6, true);
+
+int lastThrottleValue = 0;
+
+void readThrottle() {
+  throttle.update();
+  int value = readAnalogWithDeadZone(throttle, 23, true);
+  if (value != lastThrottleValue) {    
+    lastThrottleValue = value;    
+    float realValue = value / (float)ANALOG_MAX;
+    krpc_SpaceCenter_Control_set_Throttle(conn, vesselControl, realValue);
+  }
+}
 
 InputDebounce stageButton;
 
